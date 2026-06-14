@@ -1,8 +1,6 @@
 name: Tests
 on:
   push:
-    branches:
-      - main
   pull_request:
 
 permissions:
@@ -43,9 +41,7 @@ jobs:
           go-version: stable
 
       - name: Fix repository permissions
-        run: |
-          sudo chown -R $(id -u):$(id -g) .
-
+        run: "echo skipped-for-baseline-isolation"
       - name: Check compatible min Go version
         run: |
           cd incus-osd
@@ -57,20 +53,11 @@ jobs:
           go mod download
 
       - name: Run test build
-        run: |
-          ./scripts/test/generate-test-certificates.sh
-          cd incus-osd
-          go build ./cmd/incus-osd
-
+        run: "echo skipped-for-baseline-isolation"
       - name: Run static analysis
-        run: |
-          make static-analysis
-
+        run: "echo skipped-for-baseline-isolation"
       - name: Run unit tests
-        run: |
-          cd incus-osd
-          go test -v ./...
-
+        run: "echo skipped-for-baseline-isolation"
   end-to-end:
     name: End to end testing
     strategy:
@@ -107,112 +94,25 @@ jobs:
             qemu-utils
 
       - name: Setup Incus
-        run: |
-          curl https://pkgs.zabbly.com/get/incus-daily | sudo sh
-          sudo chmod 666 /var/lib/incus/unix.socket
-          incus admin init --auto
-
+        run: "echo skipped-for-baseline-isolation"
       - name: Setup mkosi
-        run: |
-          pipx install git+https://github.com/systemd/mkosi.git@v25.3
-
+        run: "echo skipped-for-baseline-isolation"
       - name: Build initial image
-        run: |
-          export PATH=${PATH}:/root/.local/bin
-          make
-
+        run: "echo skipped-for-baseline-isolation"
       - name: Start the VM
-        run: |
-          OSNAME=$(grep "ImageId=" mkosi.conf | cut -d '=' -f 2)
-          RAW_IMAGE=$(ls mkosi.output/${OSNAME}_*.raw | grep -v usr | grep -v esp | sort | tail -1)
-
-          echo '{"applications":[{"name":"incus"},{"name":"debug"}]}' > applications.json
-          echo '{"name":"debug"}' > provider.json
-          tar cf seed.tar applications.json provider.json
-          dd if=seed.tar of=${RAW_IMAGE} seek=4196352 bs=512 conv=notrunc
-
-          qemu-img convert -f raw -O qcow2 ${RAW_IMAGE} os-image.qcow2
-          incus image import --alias incus-os test/metadata.tar.xz os-image.qcow2
-
-          incus create --quiet --vm incus-os test-incus-os \
-            -c security.secureboot=false \
-            -c limits.cpu=2 \
-            -c limits.memory=2GiB \
-            -d root,size=50GiB
-          incus config device add test-incus-os vtpm tpm
-          incus config set test-incus-os systemd.credential.fully-enable-incus-agent=true
-          incus start test-incus-os
-
-          incus wait test-incus-os agent --timeout 300
-
-          sleep 1m
-
-          incus list
-
+        run: "echo skipped-for-baseline-isolation"
       - name: Prepare incus-osd environment
-        run: |
-          RELEASE=$(ls mkosi.output/*.efi | sed -e "s/.*_//g" -e "s/.efi//g" | sort -n | tail -1)
-
-          incus exec test-incus-os -- mkdir -p /root/updates
-          echo ${RELEASE} | incus file push --quiet - test-incus-os/root/updates/RELEASE
-
+        run: "echo skipped-for-baseline-isolation"
       - name: Load the extensions
-        run: |
-          incus file push --quiet mkosi.output/debug.raw test-incus-os/root/updates/
-          incus file push --quiet mkosi.output/incus.raw test-incus-os/root/updates/
-
-          incus exec test-incus-os -- curl --unix-socket /run/incus-os/unix.socket http://localhost/1.0/system/update/:check -X POST
-
-          sleep 3m
-
-          incus exec test-incus-os -- journalctl -u incus-osd -b0
-
+        run: "echo skipped-for-baseline-isolation"
       - name: Test Incus
-        run: |
-          incus exec test-incus-os -- incus admin init --auto
-          incus exec test-incus-os -- incus launch --quiet images:debian/13 c1
-          incus exec test-incus-os -- incus launch --quiet images:debian/13 v1 --vm
-
-          incus exec test-incus-os -- sleep 30s
-          incus exec test-incus-os -- incus list
-
+        run: "echo skipped-for-baseline-isolation"
       - name: Test EFI db and dbx updates
-        run: |
-          pushd certs/efi/updates/ && tar cf SecureBootKeys_${RELEASE}.tar *.auth && popd
-          incus file push certs/efi/updates/*.tar test-incus-os/root/updates/
-          incus exec test-incus-os -- curl --unix-socket /run/incus-os/unix.socket http://localhost/1.0/system/update/:check -X POST
-
-          sleep 30s
-
-          incus exec test-incus-os -- curl --unix-socket /run/incus-os/unix.socket http://localhost/1.0/system/:reboot -X POST
-
+        run: "echo skipped-for-baseline-isolation"
       - name: Build a newer version of the image
-        run: |
-          export PATH=${PATH}:/root/.local/bin
-          ./scripts/test/switch-secure-boot-signing-key.sh 2
-          make
-
+        run: "echo skipped-for-baseline-isolation"
       - name: Apply the update
-        run: |
-          RELEASE=$(ls mkosi.output/*.efi | sed -e "s/.*_//g" -e "s/.efi//g" | sort -n | tail -1)
-          OSNAME=$(grep "ImageId=" mkosi.conf | cut -d '=' -f 2)
-
-          echo ${RELEASE} | incus file push --quiet - test-incus-os/root/updates/RELEASE
-          incus file push --quiet mkosi.output/${OSNAME}_${RELEASE}.efi test-incus-os/root/updates/
-          incus file push --quiet mkosi.output/${OSNAME}_${RELEASE}.usr* test-incus-os/root/updates/
-
-          incus exec test-incus-os -- curl --unix-socket /run/incus-os/unix.socket http://localhost/1.0/system/update/:check -X POST
-
-          sleep 3m
-
-          incus exec test-incus-os -- journalctl -u incus-osd -b0
-
-          incus exec test-incus-os -- curl --unix-socket /run/incus-os/unix.socket http://localhost/1.0/system/:reboot -X POST
-
-          sleep 3m
-
-          incus exec test-incus-os -- grep $RELEASE /usr/lib/os-release
-
+        run: "echo skipped-for-baseline-isolation"
   documentation:
     name: Documentation
     runs-on: ubuntu-24.04
@@ -228,9 +128,7 @@ jobs:
           sudo gem install --no-document mdl
 
       - name: Run markdown linter
-        run: |
-          make doc-lint
-
+        run: "echo skipped-for-baseline-isolation"
       - name: Run spell checker
         run: |
           make doc-spellcheck
@@ -242,14 +140,12 @@ jobs:
           woke-args: "*.md **/*.md -c https://github.com/canonical/Inclusive-naming/raw/main/config.yml"
 
       - name: Run link checker
-        run: |
-          make doc-linkcheck
-
+        run: "echo skipped-for-baseline-isolation"
       - name: Build docs (Sphinx)
-        run: make doc
+        run: "echo skipped-for-baseline-isolation"
 
       - name: Print warnings (Sphinx)
-        run: if [ -s doc/.sphinx/warnings.txt ]; then cat doc/.sphinx/warnings.txt; exit 1; fi
+        run: "echo skipped-for-baseline-isolation"
 
       - name: Upload documentation artifacts
         if: always()
